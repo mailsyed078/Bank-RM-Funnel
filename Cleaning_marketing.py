@@ -1,9 +1,9 @@
 # Databricks notebook source
-file_path = '/FileStore/Marketing_Automation_csv.csv'
+file_path = '/FileStore/Marketing_Automation_V__2_0.csv'
 
 # COMMAND ----------
 
-raw_df = spark.read.csv(file_path, header="true", inferSchema="true", multiLine="true", escape='"')
+raw_df = spark.read.csv(file_path, header="true", inferSchema="true")
 display(raw_df)
 
 # COMMAND ----------
@@ -73,3 +73,16 @@ df.count()
 
 # MAGIC %md
 # MAGIC ##### there are no outleirs and null values
+
+# COMMAND ----------
+
+df.columns
+
+# COMMAND ----------
+
+df = df.withColumnsRenamed({'Email_Open_Rate(%)':'Email_open_rate','Click-Through_Rate_on_open_email_(%)':'click_through_rate'})
+df.columns
+
+# COMMAND ----------
+
+df.write.mode('overwrite').saveAsTable('marketing_rm_funnel')

@@ -1,5 +1,6 @@
 # Databricks notebook source
-file_path = '/FileStore/Sales___Transaction__Historical_data__V__2.csv'
+file_path = '/FileStore/Sales___Transaction__Historical_data__V__2_csv.csv'
+
 
 # COMMAND ----------
 
@@ -68,3 +69,16 @@ display(df)
 
 # MAGIC %md
 # MAGIC ##### there are no outleirs and null values
+
+# COMMAND ----------
+
+df.columns
+
+# COMMAND ----------
+
+df = df.withColumnsRenamed({'Interest_Rates_(%)':'Interest_rate','Time_to_purchase(Days)': 'Days_to_purchase'})
+df.columns
+
+# COMMAND ----------
+
+df.write.mode('overwrite').saveAsTable('sales_transaction_rm_funnel')
