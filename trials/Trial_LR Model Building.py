@@ -44,20 +44,29 @@ df.display()
 
 # COMMAND ----------
 
-## Spilliting data
-train, val, test = df.randomSplit([0.6,0.2,0.2])
-
-# COMMAND ----------
-
 #target encoding the values:
 import category_encoders
 from category_encoders.target_encoder import TargetEncoder
 
 # COMMAND ----------
 
+import pandas as pd
 pd_df = df.toPandas()
+X = pd_df.drop('Conversion_Status',axis=1)
+y = pd.get_dummies(pd_df['Conversion_Status'],drop_first=True)
 tenc = TargetEncoder(cols=['Location','Profession'])
+enc_df = tenc.fit_transform(X,y)
 
+# COMMAND ----------
+
+enc_df = pd.concat([enc_df,y],axis=1).rename(columns={'Not Converted':"Conversion_Status"})
+spark_df = spark.createDataFrame(enc_df)
+spark_df.display()
+
+# COMMAND ----------
+
+## Spilliting data
+train, val, test = spark_df.randomSplit([0.6,0.2,0.2])
 
 # COMMAND ----------
 
@@ -96,7 +105,8 @@ sc_df_train.display()
 from pyspark.ml import Pipeline
 from pyspark.ml.classification import LogisticRegression
 lr = LogisticRegression(featuresCol='sc_features',
-                        labelCol='Conversion_Status_enc', maxIter=1680)
+                        labelCol='Conversion_Status_enc', maxIter=1680,
+                        threshold=0.5)
 stages = [rform,sc,lr]
 pipeline_lr = Pipeline(stages = stages)
 
@@ -106,6 +116,16 @@ pipeline_lr = Pipeline(stages = stages)
 pipe_model = pipeline_lr.fit(train)
 preds_lr = pipe_model.transform(val)
 preds_lr.display()
+
+# COMMAND ----------
+
+ratio_df =  preds_lr.groupBy('Prediction').count().toPandas()
+ratio_df
+
+# COMMAND ----------
+
+effectiveness = (ratio_df['count'][0]/(ratio_df['count'][0]+ratio_df['count'][1]))*100
+effectiveness
 
 # COMMAND ----------
 
@@ -124,10 +144,11 @@ import mlflow
 def objective_fn(params):
     # setting the hyperparamters
     max_iter = params["max_iter"]
-    #threshold = params['threshold']
+    threshold = params['threshold']
 
     with mlflow.start_run(run_name = "lr_model_hyp") as run:
-        estimator = pipeline_lr.copy({lr.maxIter:max_iter})
+        estimator = pipeline_lr.copy({lr.maxIter:max_iter,
+                                      lr.threshold:threshold})
         model = estimator.fit(train)
         preds = model.transform(val)
         score = evaluator_lr.evaluate(preds)
@@ -141,8 +162,8 @@ def objective_fn(params):
 from hyperopt import hp
 
 search_space = {
-    'max_iter': hp.quniform('max_iter',1000,2000,10), 
-    #'threshold': hp.quniform('threshold',0.1,1.0,1)  
+    'max_iter': hp.quniform('max_iter',100,2000,10), 
+    'threshold': hp.uniform('threshold',0.1,0.9)  
 }
 
 
@@ -153,7 +174,7 @@ from hyperopt import hp,tpe, Trials, fmin
 best_params = fmin(fn=objective_fn,
                    space = search_space,
                    algo = tpe.suggest,
-                   max_evals = 8,
+                   max_evals = 32,
                    trials = Trials())
 best_params
 
@@ -193,6 +214,10 @@ loaded_model = mlflow.spark.load_model(logged_model)
 # Performing inference from the loaded model
 predictions = loaded_model.transform(test)
 predictions.display()
+
+# COMMAND ----------
+
+
 
 # COMMAND ----------
 
