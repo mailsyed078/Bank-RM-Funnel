@@ -25,7 +25,21 @@ data.columns
 # COMMAND ----------
 
 # Creating new data by dropping columns
-df = data.drop()
+df = data.drop('Lead_ID',
+ 'Customer_ID','Lead_Owner', 'Lead_Generated',
+ 'Lead_Closed',
+ 'Lead_Closed_In_Days','First_Name',
+ 'Last_Name','Education_Level', 'Touchpoint',
+ 'Email_Open_Rate',
+ 'Click-Through_Rate_on_open_email',
+ 'Website_Visits',
+ 'Previous_Product_Type', 'Start_Date',
+ 'Closure_Date',
+ 'Tenure_in_Months',
+ 'Interest_Rates',
+ 'EMI','Payment_Method',
+ 'Referral_Channel',
+ 'Device_Type')
 df.display()
 
 # COMMAND ----------
@@ -35,12 +49,23 @@ train, val, test = df.randomSplit([0.6,0.2,0.2])
 
 # COMMAND ----------
 
-### I got passed the data
+#target encoding the values:
+import category_encoders
+from category_encoders.target_encoder import TargetEncoder
+
+# COMMAND ----------
+
+pd_df = df.toPandas()
+tenc = TargetEncoder(cols=['Location','Profession'])
+
+
+# COMMAND ----------
+
 # Scaling and converting categorical into numnerical
 from pyspark.ml.feature import StandardScaler,RFormula
-rform = RFormula(formula ='Conversion_Status ~.',
+rform = RFormula(formula ='Conversion_Status ~ .',
                  featuresCol ='enc_features',
-                 labelCol ='Conversion_Status',
+                 labelCol ='Conversion_Status_enc',
                  handleInvalid = 'skip')
 sc = StandardScaler(inputCol ='enc_features',
                     outputCol = 'sc_features')
@@ -48,46 +73,17 @@ sc = StandardScaler(inputCol ='enc_features',
 
 # COMMAND ----------
 
-# applying r foruma for the train data
+# applying r forumla for the train data
 rform_model = rform.fit(train)
-enc_df_train = rform_model.transfrom(train)
+enc_df_train = rform_model.transform(train)
 enc_df_train.display()
 
 # COMMAND ----------
 
-#applying r formula for the val data
-rform_model = rform.fit(val)
-enc_df_val = rform_model.transfrom(val)
-enc_df_val.display()
-
-
-# COMMAND ----------
-
-#applying r formula for the test data
-rform_model = rform.fit(test)
-enc_df_test = rform_model.transfrom(test)
-enc_df_test.display()
-
-# COMMAND ----------
-
-# applying standard scaling on train, val and test
+# applying standard scaler on train
 sc_model_train = sc.fit(enc_df_train)
 sc_df_train = sc_model_train.transform(enc_df_train)
 sc_df_train.display()
-
-# COMMAND ----------
-
-# applying standard scaling on val 
-sc_model_val = sc.fit(enc_df_val)
-sc_df_val = sc_model_val.transform(enc_df_val)
-sc_df_val.display()
-
-# COMMAND ----------
-
-# applying standard scaling on test
-sc_model_test = sc.fit(enc_df_test)
-sc_df_test = sc_model_test.transform(enc_df_test)
-sc_df_test.display()
 
 # COMMAND ----------
 
@@ -100,7 +96,7 @@ sc_df_test.display()
 from pyspark.ml import Pipeline
 from pyspark.ml.classification import LogisticRegression
 lr = LogisticRegression(featuresCol='sc_features',
-                        labelCol='Conversion_Status')
+                        labelCol='Conversion_Status_enc', maxIter=1680)
 stages = [rform,sc,lr]
 pipeline_lr = Pipeline(stages = stages)
 
@@ -115,7 +111,7 @@ preds_lr.display()
 
 # Model evaluation
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
-evaluator_lr = MulticlassClassificationEvaluator(metricName ='f1',lableCol ='Conversion_Status')
+evaluator_lr = MulticlassClassificationEvaluator(metricName ='f1',labelCol ='Conversion_Status_enc')
 score_lr = evaluator_lr.evaluate(preds_lr)
 print(score_lr)
 
@@ -128,15 +124,14 @@ import mlflow
 def objective_fn(params):
     # setting the hyperparamters
     max_iter = params["max_iter"]
-    threshold = params['threshold']
+    #threshold = params['threshold']
 
     with mlflow.start_run(run_name = "lr_model_hyp") as run:
-        estimator = pipeline_lr.copy({lr.maxIter:max_iter,
-                                     lr.threshold:threshold})
+        estimator = pipeline_lr.copy({lr.maxIter:max_iter})
         model = estimator.fit(train)
         preds = model.transform(val)
-        score = evaluator.evaluate(preds)
-        mlflow.log_metrics('f1_score',score) 
+        score = evaluator_lr.evaluate(preds)
+        mlflow.log_metric('f1_score',score) 
 
         return -score
 
@@ -146,8 +141,8 @@ def objective_fn(params):
 from hyperopt import hp
 
 search_space = {
-    'max_iter': hp.quniform('max_iter',100,500,1), 
-    'threshold': hp.quniform('threshold',0.1,1,1)  
+    'max_iter': hp.quniform('max_iter',1000,2000,10), 
+    #'threshold': hp.quniform('threshold',0.1,1.0,1)  
 }
 
 
@@ -158,7 +153,7 @@ from hyperopt import hp,tpe, Trials, fmin
 best_params = fmin(fn=objective_fn,
                    space = search_space,
                    algo = tpe.suggest,
-                   max_evals = 4,
+                   max_evals = 8,
                    trials = Trials())
 best_params
 
@@ -196,7 +191,6 @@ logged_model = f'runs:/{run_id}/model'
 loaded_model = mlflow.spark.load_model(logged_model)
 
 # Performing inference from the loaded model
-
 predictions = loaded_model.transform(test)
 predictions.display()
 
