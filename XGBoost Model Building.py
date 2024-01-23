@@ -220,4 +220,6 @@ print(f"As per the given data the effectiveness of the funnel is: {effectiveness
 
 # COMMAND ----------
 
-
+#live input predictor:
+def predictor(input_list):
+    
