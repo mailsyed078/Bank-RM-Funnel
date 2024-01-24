@@ -10,6 +10,20 @@ data.count(),len(data.columns)
 
 # COMMAND ----------
 
+#checking for duplicates
+data.dropDuplicates().count()
+
+# COMMAND ----------
+
+# Statistical analysis
+dbutils.data.summarize(data)
+
+# COMMAND ----------
+
+data.columns
+
+# COMMAND ----------
+
 # Creating new data by dropping columns
 df = data.drop('Lead_ID',
  'Customer_ID','Lead_Owner', 'Lead_Generated',
@@ -31,43 +45,45 @@ df.display()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### XGB Classification 
+# MAGIC ### Data Transformation
 
 # COMMAND ----------
 
-import category_encoders
-from category_encoders.target_encoder import TargetEncoder
+data.dtypes
 
 # COMMAND ----------
 
-import pandas as pd
-pdf = df.toPandas()
-X = pdf.drop('Conversion_Status',axis = 1)
-y = pd.get_dummies(pdf['Conversion_Status'],drop_first=True)
-
-
-# COMMAND ----------
-
-num_cols = X.select_dtypes(include='number').columns
-cat_cols = X.select_dtypes(exclude='number').columns
+#splitting the columns in numerical and categorical:
+num_cols = [i for (i,j) in df.dtypes if j!='string']
+cat_cols = [i for (i,j) in df.dtypes if j=='string']
 print(num_cols)
 print(cat_cols)
 
 # COMMAND ----------
 
-enc_tar = TargetEncoder(cols = ['Lead_Source ', 'Account_Type', 'Product/Service_Interest', 'Location',
-       'City', 'Gender', 'Maritial_Status', 'Property_Ownership', 'Profession',
-       'Loan_Status'])
-enc_df = enc_tar.fit_transform(X,y)
+#creating string indexer object:
+from pyspark.ml.feature import StringIndexer
+si_cols = [x + "_si" for x in cat_cols]
+si = StringIndexer(inputCols=cat_cols,outputCols=si_cols)
 
 # COMMAND ----------
 
-concated_df = pd.concat([enc_df,y],axis=1).rename(columns = {'Not Converted':'Conversion_Status'})
-spark_df = spark.createDataFrame(concated_df)
-spark_df.display()
+enc_df = si.fit(train).transform(train)
+enc_df.display()
 
 # COMMAND ----------
 
+#creating the vector assembler object:
+from pyspark.ml.feature import VectorAssembler
+vc = VectorAssembler(inputCols = num_cols+si_cols ,outputCol='inp_features')
+
+# COMMAND ----------
+
+vc.transform(enc_df).display()
+
+# COMMAND ----------
+
+# DBTITLE 1,XG Boost Model Building
 !pip install sparkxgb
 
 # COMMAND ----------
@@ -75,17 +91,11 @@ spark_df.display()
 ## Importing required libraries
 import sparkxgb
 from sparkxgb.xgboost import XGBoostClassifier
-from pyspark.ml.feature import VectorAssembler
-
-# COMMAND ----------
-
-#assembling the columns:
-vc = VectorAssembler(inputCols = spark_df.drop('Conversion_Status').columns,outputCol='inp_features')
 
 # COMMAND ----------
 
 ## Spilliting data
-train, val, test = spark_df.randomSplit([0.6,0.2,0.2])
+train, val, test = df.randomSplit([0.6,0.2,0.2])
 
 # COMMAND ----------
 
@@ -93,8 +103,8 @@ train, val, test = spark_df.randomSplit([0.6,0.2,0.2])
 from pyspark.ml import Pipeline
 xgb = XGBoostClassifier(objective="binary:logistic",
                         featuresCol="inp_features",
-                        labelCol="Conversion_Status")
-stages = [vc,xgb]
+                        labelCol="Conversion_Status_si")
+stages = [si,vc,xgb]
 pipeline_xgb = Pipeline(stages = stages)
 
 # COMMAND ----------
@@ -225,4 +235,6 @@ print(f"As per the given data the effectiveness of the funnel is: {effectiveness
 
 # COMMAND ----------
 
-
+#live input predictor:
+def predictor(input_list):
+    

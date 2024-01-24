@@ -49,6 +49,7 @@ train, val, test = df.randomSplit([0.6,0.2,0.2])
 
 # COMMAND ----------
 
+# DBTITLE 1,Data Transformation
 # Scaling and converting categorical into numnerical
 from pyspark.ml.feature import StandardScaler,RFormula
 rform = RFormula(formula ='Conversion_Status ~ .',
@@ -105,6 +106,10 @@ print(score_lr)
 
 # COMMAND ----------
 
+help(LogisticRegression)
+
+# COMMAND ----------
+
 # DBTITLE 1,Hyperparameter Tuning for Logistic Regression model
 # defining objective_function
 import mlflow
@@ -112,10 +117,11 @@ import mlflow
 def objective_fn(params):
     # setting the hyperparamters
     max_iter = params["max_iter"]
-    #threshold = params['threshold']
+    threshold = params['threshold']
 
     with mlflow.start_run(run_name = "lr_model_hyp") as run:
-        estimator = pipeline_lr.copy({lr.maxIter:max_iter})
+        estimator = pipeline_lr.copy({lr.maxIter:max_iter,
+                                      lr.threshold:threshold})
         model = estimator.fit(train)
         preds = model.transform(val)
         score = evaluator_lr.evaluate(preds)
@@ -127,10 +133,11 @@ def objective_fn(params):
 
 # defining the search space
 from hyperopt import hp
+max_iter = [100,150,200,250,300]
 
 search_space = {
-    'max_iter': hp.quniform('max_iter',1000,2000,10), 
-    #'threshold': hp.quniform('threshold',0.1,1.0,1)  
+    'max_iter': hp.choice('max_iter',max_iter), 
+    'threshold': hp.uniform('threshold',0.4,0.9)  
 }
 
 
@@ -141,7 +148,7 @@ from hyperopt import hp,tpe, Trials, fmin
 best_params = fmin(fn=objective_fn,
                    space = search_space,
                    algo = tpe.suggest,
-                   max_evals = 8,
+                   max_evals = 10,
                    trials = Trials())
 best_params
 
@@ -151,18 +158,18 @@ best_params
 with mlflow.start_run(run_name = 'LR_final_model') as run:
     mlflow.autolog()
 
-    best_max_iter = best_params['max_iter']
+    best_max_iter = max_iter[best_params['max_iter']]
     best_threshold = best_params['threshold']
 
     # creating pipeline
     estimator = pipeline_lr.copy({lr.maxIter:best_max_iter, lr.threshold:best_threshold})
     model = estimator.fit(train)
     preds = model.transform(val)
-    score = evaluator.evaluate(preds)
+    score = evaluator_lr.evaluate(preds)
     
     # logging the parameters and metrics
     
-    mlflow.log_metrics('f1_score',score) 
+    mlflow.log_metric('f1_score',score) 
     mlflow.log_param('best_max_iter',best_max_iter)
     mlflow.log_param('best_threshold',best_threshold)
 
@@ -170,20 +177,28 @@ with mlflow.start_run(run_name = 'LR_final_model') as run:
 # COMMAND ----------
 
 # DBTITLE 1,Prediction on test data.
-import mlflow
-
-run_id = run.info.run_id
-logged_model = f'runs:/{run_id}/model'
-
-#Loading model
-loaded_model = mlflow.spark.load_model(logged_model)
-
 # Performing inference from the loaded model
-predictions = loaded_model.transform(test)
+predictions = model.transform(test)
 predictions.display()
 
 # COMMAND ----------
 
 #accuracy on test data:
-score = evaluator.evaluate(predictions)
+score = evaluator_lr.evaluate(predictions)
 print(score)
+
+# COMMAND ----------
+
+#calculating the ratio of conversion
+ratio_df =  predictions.groupBy('Prediction').count().toPandas()
+ratio_df
+
+# COMMAND ----------
+
+#calculating the effectiveness
+effectiveness = (ratio_df['count'][0]/(ratio_df['count'][0]+ratio_df['count'][1]))*100
+print(f"As per the given data the effectiveness of the funnel is: {effectiveness}")
+
+# COMMAND ----------
+
+
